@@ -3,11 +3,13 @@ import java.io.BufferedWriter;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.OutputStreamWriter;
+import java.io.PrintWriter;
 import java.math.BigInteger;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.text.DateFormat;
 import java.util.Random;
 import java.util.Scanner;
 
@@ -30,64 +32,74 @@ public class Server {
 	private static int gBits = 1024;
 	
 	public static void main(String [] args) {
-		System.out.println("Wait for the request of a user.....");
+		// Check if CA's key pair is valid
+		boolean privateKeyCriteria = x.compareTo(BigInteger.ZERO) == 1 && x.compareTo(q) == -1;
+		boolean publicKeyCriteria = g.modPow(x, p).equals(y);
 		
-		try {
-			ServerSocket serverSocket = new ServerSocket(SERVER_PORT);
-			Socket client = serverSocket.accept();
-			
-			// Get user's identity
-			BufferedReader reader = new BufferedReader(new InputStreamReader(client.getInputStream()));
-			StringBuilder sb = new StringBuilder();
-			
-			int character = reader.read();
-			int byteCount = 0;
-			while (byteCount < 10) {
-				sb.append((char)character);
-				character = reader.read();
-				byteCount++;
-			}
-	        
-			String identity = sb.toString();
-			
-			Scanner in = new Scanner(System.in);
-			System.out.println("Enter the expiry date of the certificate (yyyy-mm-dd):");
-			String expiryDate = in.nextLine();
-			
-			BigInteger s = new BigInteger("0");
-			BigInteger r = new BigInteger("0");
-			BigInteger h = new BigInteger("0");
-			
-			while(s.equals(new BigInteger("0"))) {
-				// DSS Signature Generation
-				Random rnd = new Random();
-				BigInteger k = new BigInteger(q.bitLength(), rnd);
-				r = (g.modPow(k, p)).mod(q);
+		if(privateKeyCriteria && publicKeyCriteria) {
 
-				final String m = "50";
+			System.out.println("Wait for the request of a user.....");
 
-				MessageDigest messageDigest ;
-				try {
-					messageDigest = MessageDigest.getInstance("SHA-1");
-					messageDigest.update(m.getBytes());
-					byte byteData[] = messageDigest.digest();
+			try {
+				ServerSocket serverSocket = new ServerSocket(SERVER_PORT);
+				Socket client = serverSocket.accept();
 
-					h = new BigInteger(byteData);
-				} catch (NoSuchAlgorithmException e) {
-					// TODO Auto-generated catch block
-					e.printStackTrace();
+				// Get user's identity
+				BufferedReader reader = new BufferedReader(new InputStreamReader(client.getInputStream()));
+				StringBuilder sb = new StringBuilder();
+
+				String identity = reader.readLine();
+				y = new BigInteger(reader.readLine());
+
+				Scanner in = new Scanner(System.in);
+				System.out.println("Enter the expiry date of the certificate (yyyy-mm-dd):");
+				String expiryDate = in.nextLine();
+
+				while(expiryDate.length() != 10) {
+					System.out.println("Date is not valid. Re-enter date (yyyy-mm-dd):");
+					expiryDate = in.nextLine();
 				}
-				
-				BigInteger i = k.modInverse(q);
-				
-				// Solve for s
-				s = ((h.add(x.multiply(r))).multiply(i)).mod(q);
+
+				BigInteger s = new BigInteger("0");
+				BigInteger r = new BigInteger("0");
+				BigInteger h = new BigInteger("0");
+
+				while(s.equals(new BigInteger("0"))) {
+
+					// DSS Signature Generation
+					Random rnd = new Random();
+					BigInteger k = new BigInteger(q.bitLength(), rnd);
+					
+					r = (g.modPow(k, p)).mod(q);
+
+					final String m = "50";
+
+					MessageDigest messageDigest ;
+					try {
+						messageDigest = MessageDigest.getInstance("SHA-1");
+						messageDigest.update(m.getBytes());
+						byte byteData[] = messageDigest.digest();
+
+						h = new BigInteger(byteData);
+					} catch (NoSuchAlgorithmException e) {
+						// TODO Auto-generated catch block
+						e.printStackTrace();
+					}
+
+					BigInteger i = k.modInverse(q);
+
+					// Solve for s
+					s = ((h.add(x.multiply(r))).multiply(i)).mod(q);
+				}
+
+				sendMiniCertificate(client, identity, y, expiryDate, r, s, h);
+				client.close();
+			} catch (IOException e) {
+				e.printStackTrace();
 			}
-			
-			sendMiniCertificate(client, identity, y, expiryDate, r, s);
-			client.close();
-		} catch (IOException e) {
-			e.printStackTrace();
+		}
+		else {
+			System.out.println("Key pairs are not valid.");
 		}
 	}
 	
@@ -101,12 +113,15 @@ public class Server {
 	 * @param s
 	 */
 	private static void sendMiniCertificate(Socket client, String identity, BigInteger userPublicKey, 
-			String expiryDate, BigInteger r, BigInteger s) {
+			String expiryDate, BigInteger r, BigInteger s, BigInteger h) {
 		try {
-			BufferedWriter writer = new BufferedWriter(new OutputStreamWriter(client.getOutputStream()));
-			writer.write(identity + userPublicKey.toString() + expiryDate + r.toString() + s.toString());
-			writer.flush();
-			writer.close();
+			PrintWriter writer = new PrintWriter(client.getOutputStream(), true);
+			writer.println(identity);
+			writer.println(userPublicKey.toString());
+			writer.println(expiryDate);
+			writer.println(r.toString());
+			writer.println(s.toString());
+			writer.println(h.toString());
 			
 			System.out.println("The user " + identity + " with IP address " 
 					+ client.getRemoteSocketAddress().toString()
